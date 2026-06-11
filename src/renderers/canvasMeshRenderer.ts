@@ -101,15 +101,15 @@ export function createCanvasMeshRenderer(
     const total = Math.max(2, config.blobCount);
 
     blobs = Array.from({ length: total }).map(() => {
-      const radius = rand(minDim * 0.1, minDim * 0.32);
+      const radius = rand(0.1, 0.32);
       return {
-        anchorX: rand(radius * 0.6, Math.max(radius * 0.6 + 2, width - radius * 0.6)),
-        anchorY: rand(radius * 0.6, Math.max(radius * 0.6 + 2, height - radius * 0.6)),
+        anchorX: rand(radius * 0.6 * minDim / width, Math.max(radius * 0.6 * minDim / width + 0.002, 1 - radius * 0.6 * minDim / width)),
+        anchorY: rand(radius * 0.6 * minDim / height, Math.max(radius * 0.6 * minDim / height + 0.002, 1 - radius * 0.6 * minDim / height)),
         radius,
         phaseX: rand(0, Math.PI * 2),
         phaseY: rand(0, Math.PI * 2),
-        driftX: rand(width * 0.04, width * 0.12),
-        driftY: rand(height * 0.04, height * 0.12),
+        driftX: rand(0.04, 0.12),
+        driftY: rand(0.04, 0.12),
       };
     });
   }
@@ -143,7 +143,13 @@ export function createCanvasMeshRenderer(
     rafId = requestAnimationFrame(tick);
   }
 
-  function renderFrame(targetCtx: CanvasRenderingContext2D = ctx, targetW = width, targetH = height): void {
+  function renderFrame(
+    targetCtx: CanvasRenderingContext2D = ctx,
+    targetW = width,
+    targetH = height,
+    renderTime = time,
+    renderPointer: PointerState = pointer,
+  ): void {
     targetCtx.save();
     targetCtx.clearRect(0, 0, targetW, targetH);
 
@@ -151,19 +157,25 @@ export function createCanvasMeshRenderer(
     targetCtx.fillRect(0, 0, targetW, targetH);
 
     if (config.fullCanvasGradient) {
-      drawGradientField(targetCtx, targetW, targetH);
+      drawGradientField(targetCtx, targetW, targetH, renderTime, renderPointer);
     } else if (config.shapeStyle === 'center') {
-      drawCenterMorphBlob(targetCtx, targetW, targetH);
+      drawCenterMorphBlob(targetCtx, targetW, targetH, renderTime, renderPointer);
     } else {
-      drawBlobMesh(targetCtx, targetW, targetH);
+      drawBlobMesh(targetCtx, targetW, targetH, renderTime, renderPointer);
     }
 
-    drawMouseField(targetCtx, targetW, targetH);
+    drawMouseField(targetCtx, targetW, targetH, renderPointer);
     drawGrain(targetCtx, targetW, targetH, config.grainOpacity);
     targetCtx.restore();
   }
 
-  function drawGradientField(targetCtx: CanvasRenderingContext2D, targetW: number, targetH: number): void {
+  function drawGradientField(
+    targetCtx: CanvasRenderingContext2D,
+    targetW: number,
+    targetH: number,
+    renderTime: number,
+    renderPointer: PointerState,
+  ): void {
     targetCtx.save();
     targetCtx.globalCompositeOperation = config.blendMode;
     targetCtx.filter = `blur(${Math.max(36, config.blurPx * 0.7)}px)`;
@@ -172,13 +184,13 @@ export function createCanvasMeshRenderer(
     const driftScale = 0.2 * (0.6 + config.motionIntensity * 0.5);
     for (let i = 0; i < count; i += 1) {
       const color = config.colors[i % config.colors.length] ?? '#3b82f6';
-      const nx = 0.5 + Math.sin(time * 0.55 + i * 1.11) * driftScale;
-      const ny = 0.5 + Math.cos(time * 0.47 + i * 1.37) * driftScale;
+      const nx = 0.5 + Math.sin(renderTime * 0.55 + i * 1.11) * driftScale;
+      const ny = 0.5 + Math.cos(renderTime * 0.47 + i * 1.37) * driftScale;
       let cx = nx * targetW;
       let cy = ny * targetH;
       const radius = Math.max(targetW, targetH) * (0.46 + i * 0.08);
 
-      const push = getMouseOffset(cx, cy, 0.45);
+      const push = getMouseOffset(cx, cy, 0.45, renderPointer);
       cx += push.x;
       cy += push.y;
 
@@ -195,10 +207,17 @@ export function createCanvasMeshRenderer(
     targetCtx.restore();
   }
 
-  function drawBlobMesh(targetCtx: CanvasRenderingContext2D, targetW: number, targetH: number): void {
+  function drawBlobMesh(
+    targetCtx: CanvasRenderingContext2D,
+    targetW: number,
+    targetH: number,
+    renderTime: number,
+    renderPointer: PointerState,
+  ): void {
     targetCtx.save();
     targetCtx.globalCompositeOperation = config.blendMode;
     targetCtx.filter = `blur(${config.blurPx}px)`;
+    const minDim = Math.max(80, Math.min(targetW, targetH));
 
     for (let i = 0; i < blobs.length; i += 1) {
       const blob = blobs[i];
@@ -206,20 +225,21 @@ export function createCanvasMeshRenderer(
         continue;
       }
 
-      let x = blob.anchorX + Math.sin(time + blob.phaseX) * blob.driftX * config.motionIntensity;
-      let y = blob.anchorY + Math.cos(time * 0.92 + blob.phaseY) * blob.driftY * config.motionIntensity;
-      const push = getMouseOffset(x, y, 0.7);
+      const radius = blob.radius * minDim;
+      let x = blob.anchorX * targetW + Math.sin(renderTime + blob.phaseX) * blob.driftX * targetW * config.motionIntensity;
+      let y = blob.anchorY * targetH + Math.cos(renderTime * 0.92 + blob.phaseY) * blob.driftY * targetH * config.motionIntensity;
+      const push = getMouseOffset(x, y, 0.7, renderPointer);
       x += push.x;
       y += push.y;
 
       const color = config.colors[i % config.colors.length] ?? '#3b82f6';
-      const gradient = targetCtx.createRadialGradient(x, y, 0, x, y, blob.radius);
+      const gradient = targetCtx.createRadialGradient(x, y, 0, x, y, radius);
       gradient.addColorStop(0, withAlpha(color, 0.92));
       gradient.addColorStop(1, withAlpha(color, 0));
 
       targetCtx.fillStyle = gradient;
       targetCtx.beginPath();
-      targetCtx.arc(x, y, blob.radius, 0, Math.PI * 2);
+      targetCtx.arc(x, y, radius, 0, Math.PI * 2);
       targetCtx.fill();
     }
 
@@ -232,7 +252,13 @@ export function createCanvasMeshRenderer(
     targetCtx.restore();
   }
 
-  function drawCenterMorphBlob(targetCtx: CanvasRenderingContext2D, targetW: number, targetH: number): void {
+  function drawCenterMorphBlob(
+    targetCtx: CanvasRenderingContext2D,
+    targetW: number,
+    targetH: number,
+    renderTime: number,
+    renderPointer: PointerState,
+  ): void {
     targetCtx.save();
     targetCtx.globalCompositeOperation = config.blendMode;
     targetCtx.filter = `blur(${Math.max(20, config.blurPx * 0.6)}px)`;
@@ -241,9 +267,9 @@ export function createCanvasMeshRenderer(
     const baseRadius = minDim * 0.28 * clamp(config.centerBlobScale, 0.5, 2);
     const offsetX = targetW * (clamp(config.centerOffsetX, -45, 45) / 100);
     const offsetY = targetH * (clamp(config.centerOffsetY, -45, 45) / 100);
-    let centerX = targetW * 0.5 + offsetX + Math.sin(time * 0.35) * targetW * 0.03 * config.motionIntensity;
-    let centerY = targetH * 0.5 + offsetY + Math.cos(time * 0.28) * targetH * 0.03 * config.motionIntensity;
-    const centerPush = getMouseOffset(centerX, centerY, 1);
+    let centerX = targetW * 0.5 + offsetX + Math.sin(renderTime * 0.35) * targetW * 0.03 * config.motionIntensity;
+    let centerY = targetH * 0.5 + offsetY + Math.cos(renderTime * 0.28) * targetH * 0.03 * config.motionIntensity;
+    const centerPush = getMouseOffset(centerX, centerY, 1, renderPointer);
     centerX += centerPush.x;
     centerY += centerPush.y;
 
@@ -251,9 +277,9 @@ export function createCanvasMeshRenderer(
     for (let i = 0; i < layers; i += 1) {
       const color = config.colors[i % config.colors.length] ?? '#3b82f6';
       const scale = 1 + i * 0.08;
-      const phase = time * (0.8 + i * 0.12) + i * 1.27;
-      const layerOffsetX = Math.sin(time * 0.48 + i) * targetW * 0.02 * config.motionIntensity;
-      const layerOffsetY = Math.cos(time * 0.43 + i * 0.9) * targetH * 0.02 * config.motionIntensity;
+      const phase = renderTime * (0.8 + i * 0.12) + i * 1.27;
+      const layerOffsetX = Math.sin(renderTime * 0.48 + i) * targetW * 0.02 * config.motionIntensity;
+      const layerOffsetY = Math.cos(renderTime * 0.43 + i * 0.9) * targetH * 0.02 * config.motionIntensity;
       const radius = baseRadius * scale;
 
       targetCtx.beginPath();
@@ -276,8 +302,13 @@ export function createCanvasMeshRenderer(
     targetCtx.restore();
   }
 
-  function drawMouseField(targetCtx: CanvasRenderingContext2D, targetW: number, targetH: number): void {
-    if (!config.mouseInteraction || !pointer.inside) {
+  function drawMouseField(
+    targetCtx: CanvasRenderingContext2D,
+    targetW: number,
+    targetH: number,
+    renderPointer: PointerState,
+  ): void {
+    if (!config.mouseInteraction || !renderPointer.inside) {
       return;
     }
 
@@ -286,7 +317,7 @@ export function createCanvasMeshRenderer(
       ? withAlpha(config.colors[0] ?? '#ffffff', 0.2)
       : withAlpha(config.colors[1] ?? '#ffffff', 0.18);
 
-    const gradient = targetCtx.createRadialGradient(pointer.x, pointer.y, 0, pointer.x, pointer.y, radius);
+    const gradient = targetCtx.createRadialGradient(renderPointer.x, renderPointer.y, 0, renderPointer.x, renderPointer.y, radius);
     gradient.addColorStop(0, color);
     gradient.addColorStop(1, 'rgba(0,0,0,0)');
 
@@ -311,13 +342,18 @@ export function createCanvasMeshRenderer(
     targetCtx.restore();
   }
 
-  function getMouseOffset(x: number, y: number, falloffBoost: number): { x: number; y: number } {
-    if (!config.mouseInteraction || !pointer.inside) {
+  function getMouseOffset(
+    x: number,
+    y: number,
+    falloffBoost: number,
+    renderPointer: PointerState,
+  ): { x: number; y: number } {
+    if (!config.mouseInteraction || !renderPointer.inside) {
       return { x: 0, y: 0 };
     }
 
-    const dx = x - pointer.x;
-    const dy = y - pointer.y;
+    const dx = x - renderPointer.x;
+    const dy = y - renderPointer.y;
     const distance = Math.hypot(dx, dy);
     const radius = Math.max(20, config.mouseRadius);
     if (distance >= radius) {
@@ -401,6 +437,9 @@ export function createCanvasMeshRenderer(
 
     const durationMs = clampInt(options.durationMs ?? 10_000, 1_000, 60_000);
     const fps = clamp(options.fps ?? 30, 12, 60);
+    const exportWidth = clampInt(options.width ?? width, 64, 7680);
+    const exportHeight = clampInt(options.height ?? height, 64, 7680);
+    const videoBitsPerSecond = clampInt(options.videoBitsPerSecond ?? 8_000_000, 1_000_000, 80_000_000);
     const mimeType = resolveClipMimeType(
       options.preferMp4 ?? true,
       options.allowWebmFallback ?? true,
@@ -410,16 +449,36 @@ export function createCanvasMeshRenderer(
       return null;
     }
 
-    renderFrame();
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = exportWidth;
+    exportCanvas.height = exportHeight;
+    const exportCtx = exportCanvas.getContext('2d', { alpha: true });
+    if (!exportCtx) {
+      return null;
+    }
+    exportCtx.setTransform(1, 0, 0, 1, 0, 0);
 
-    const stream = canvas.captureStream(fps);
+    const pointerSnapshot = width > 0 && height > 0 && pointer.inside
+      ? {
+          x: (pointer.x / width) * exportWidth,
+          y: (pointer.y / height) * exportHeight,
+          inside: true,
+        }
+      : { x: 0, y: 0, inside: false };
+
+    const frameCount = Math.max(1, Math.round((durationMs / 1000) * fps));
+    const exportStartTime = time;
+    renderFrame(exportCtx, exportWidth, exportHeight, exportStartTime, pointerSnapshot);
+
+    const stream = exportCanvas.captureStream(fps);
+    const track = stream.getVideoTracks()[0] as (MediaStreamTrack & { requestFrame?: () => void }) | undefined;
     const chunks: BlobPart[] = [];
 
     return await new Promise<ClipRecordResult | null>((resolve, reject) => {
       let done = false;
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 8_000_000,
+        videoBitsPerSecond,
       });
 
       const finish = (result: ClipRecordResult | null): void => {
@@ -456,11 +515,34 @@ export function createCanvasMeshRenderer(
       };
 
       recorder.start(220);
-      window.setTimeout(() => {
-        if (recorder.state !== 'inactive') {
-          recorder.stop();
+
+      void (async () => {
+        try {
+          const frameDurationMs = 1000 / fps;
+          const wallStart = performance.now();
+          for (let frame = 0; frame < frameCount; frame += 1) {
+            const elapsedSeconds = frame / fps;
+            const frameTime = exportStartTime + elapsedSeconds * config.speed * 1.35;
+            renderFrame(exportCtx, exportWidth, exportHeight, frameTime, pointerSnapshot);
+            track?.requestFrame?.();
+
+            const nextFrameAt = wallStart + (frame + 1) * frameDurationMs;
+            const delayMs = Math.max(0, nextFrameAt - performance.now());
+            await waitForDelay(delayMs);
+          }
+
+          window.setTimeout(() => {
+            if (recorder.state !== 'inactive') {
+              recorder.stop();
+            }
+          }, Math.max(160, frameDurationMs * 2));
+        } catch (error) {
+          if (recorder.state !== 'inactive') {
+            recorder.stop();
+          }
+          reject(error instanceof Error ? error : new Error('Video recording failed in this browser.'));
         }
-      }, durationMs);
+      })();
     });
   }
 
@@ -591,6 +673,12 @@ function withAlpha(color: string, alpha: number): string {
   }
 
   return color;
+}
+
+function waitForDelay(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  });
 }
 
 function normalizeHex(value: string): string {

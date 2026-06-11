@@ -1,4 +1,4 @@
-export type PresetId = 'itonics-neutral' | 'neon' | 'dark';
+export type PresetId = 'itonics-neutral' | 'luna-dark-center-blob';
 
 export type CanvasShapeStyle = 'mesh' | 'center';
 
@@ -16,6 +16,29 @@ export type CanvasBlendMode =
   | 'difference'
   | 'exclusion';
 
+export interface BuiltinPresetSnapshot {
+  colors: string[];
+  background: string;
+  sectionHeightVh: number;
+  shapeStyle: CanvasShapeStyle;
+  maxDpr: number;
+  paused: boolean;
+  speed: number;
+  motionIntensity: number;
+  grainOpacity: number;
+  centerBlobScale: number;
+  centerOffsetX: number;
+  centerOffsetY: number;
+  blendMode: CanvasBlendMode;
+  fullCanvasGradient: boolean;
+  mouseInteraction: boolean;
+  mouseMode: MouseMode;
+  mouseStrength: number;
+  mouseRadius: number;
+  blobCount: number;
+  blurPx: number;
+}
+
 export interface GrainPreset {
   id: PresetId;
   label: string;
@@ -23,6 +46,7 @@ export interface GrainPreset {
   colors: string[];
   defaultBlendMode: CanvasBlendMode;
   defaultGrainOpacity: number;
+  defaults: BuiltinPresetSnapshot;
 }
 
 export interface RenderConfig {
@@ -57,8 +81,11 @@ export interface RendererCallbacks {
 export interface ClipRecordOptions {
   durationMs?: number;
   fps?: number;
+  width?: number;
+  height?: number;
   preferMp4?: boolean;
   allowWebmFallback?: boolean;
+  videoBitsPerSecond?: number;
 }
 
 export interface ClipRecordResult {

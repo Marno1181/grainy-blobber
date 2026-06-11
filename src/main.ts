@@ -17,6 +17,17 @@ import type {
 
 const PALETTE_SIZE = 5;
 const USER_PRESETS_STORAGE_KEY = 'grainy_blobber_user_presets_v1';
+const VIDEO_EXPORT_PRESETS = [
+  { id: '720p', label: '720p (1280x720)', width: 1280, height: 720, videoBitsPerSecond: 8_000_000 },
+  { id: '1080p', label: '1080p (1920x1080)', width: 1920, height: 1080, videoBitsPerSecond: 12_000_000 },
+  { id: '2k', label: '2K (2560x1440)', width: 2560, height: 1440, videoBitsPerSecond: 20_000_000 },
+  { id: '4k', label: '4K (3840x2160)', width: 3840, height: 2160, videoBitsPerSecond: 35_000_000 },
+] as const;
+const VIDEO_EXPORT_DURATIONS = [
+  { id: '10s', label: '10 seconds', durationMs: 10_000 },
+  { id: '20s', label: '20 seconds', durationMs: 20_000 },
+  { id: '30s', label: '30 seconds', durationMs: 30_000 },
+] as const;
 
 interface AppState {
   presetId: PresetId;
@@ -135,6 +146,8 @@ const copyHtmlBtn = queryEl<HTMLButtonElement>('#copyHtmlBtn');
 const copyCssBtn = queryEl<HTMLButtonElement>('#copyCssBtn');
 const copyJsBtn = queryEl<HTMLButtonElement>('#copyJsBtn');
 const downloadPngBtn = queryEl<HTMLButtonElement>('#downloadPngBtn');
+const videoResolutionSelect = queryEl<HTMLSelectElement>('#videoResolutionSelect');
+const videoDurationSelect = queryEl<HTMLSelectElement>('#videoDurationSelect');
 const downloadVideoBtn = queryEl<HTMLButtonElement>('#downloadVideoBtn');
 
 const statusLine = queryEl<HTMLElement>('#statusLine');
@@ -166,6 +179,7 @@ refreshSavedPresetOptions();
 applyShapeVisibility();
 applyStageHeight();
 updateMotionNote();
+syncVideoExportButtonLabel();
 rebuildRenderer();
 startPerfTicker();
 
@@ -524,15 +538,23 @@ downloadVideoBtn.addEventListener('click', async () => {
     return;
   }
 
+  const selectedResolution = VIDEO_EXPORT_PRESETS.find((preset) => preset.id === videoResolutionSelect.value)
+    ?? VIDEO_EXPORT_PRESETS[1];
+  const selectedDuration = VIDEO_EXPORT_DURATIONS.find((preset) => preset.id === videoDurationSelect.value)
+    ?? VIDEO_EXPORT_DURATIONS[0];
+
   downloadVideoBtn.disabled = true;
-  setStatus('Recording 10 second clip...');
+  setStatus(`Recording ${selectedDuration.label} clip at ${selectedResolution.label}...`);
 
   try {
     const clip = await renderer.recordClip({
-      durationMs: 10_000,
+      durationMs: selectedDuration.durationMs,
       fps: 30,
+      width: selectedResolution.width,
+      height: selectedResolution.height,
       preferMp4: true,
       allowWebmFallback: true,
+      videoBitsPerSecond: selectedResolution.videoBitsPerSecond,
     });
 
     if (!clip) {
@@ -541,8 +563,13 @@ downloadVideoBtn.addEventListener('click', async () => {
     }
 
     const extension = clip.mimeType.includes('mp4') ? 'mp4' : 'webm';
-    triggerBlobDownload(clip.blob, `grainy-blobber-10s.${extension}`);
-    setStatus(extension === 'mp4' ? 'Downloaded 10s MP4 clip.' : 'Downloaded 10s WebM clip (MP4 unsupported).');
+    const filename = `grainy-blobber-${selectedResolution.id}-${selectedDuration.id}.${extension}`;
+    triggerBlobDownload(clip.blob, filename);
+    setStatus(
+      extension === 'mp4'
+        ? `Downloaded ${selectedDuration.label} MP4 clip at ${selectedResolution.label}.`
+        : `Downloaded ${selectedDuration.label} WebM clip at ${selectedResolution.label} (MP4 unsupported).`,
+    );
   } catch (error) {
     setStatus(error instanceof Error ? error.message : 'Video export failed.');
   } finally {
@@ -577,6 +604,14 @@ function setupSelects(): void {
 
   blendModeSelect.innerHTML = CANVAS_BLEND_MODES
     .map((mode) => `<option value="${mode.value}">${mode.label}</option>`)
+    .join('');
+
+  videoResolutionSelect.innerHTML = VIDEO_EXPORT_PRESETS
+    .map((preset) => `<option value="${preset.id}">${preset.label}</option>`)
+    .join('');
+
+  videoDurationSelect.innerHTML = VIDEO_EXPORT_DURATIONS
+    .map((duration) => `<option value="${duration.id}">${duration.label}</option>`)
     .join('');
 }
 
@@ -627,8 +662,19 @@ function syncControlsFromState(): void {
   mouseModeSelect.value = state.mouseMode;
   mouseStrengthRange.value = state.mouseStrength.toFixed(2);
   mouseRadiusRange.value = String(state.mouseRadius);
+  videoResolutionSelect.value = VIDEO_EXPORT_PRESETS[1].id;
+  videoDurationSelect.value = VIDEO_EXPORT_DURATIONS[0].id;
 
   syncValueLabels();
+}
+
+videoResolutionSelect.addEventListener('change', syncVideoExportButtonLabel);
+videoDurationSelect.addEventListener('change', syncVideoExportButtonLabel);
+
+function syncVideoExportButtonLabel(): void {
+  const resolutionLabel = VIDEO_EXPORT_PRESETS.find((preset) => preset.id === videoResolutionSelect.value)?.id ?? '1080p';
+  const durationLabel = VIDEO_EXPORT_DURATIONS.find((duration) => duration.id === videoDurationSelect.value)?.id ?? '10s';
+  downloadVideoBtn.textContent = `Download ${durationLabel} ${resolutionLabel.toUpperCase()} Video`;
 }
 
 function syncValueLabels(): void {
@@ -749,11 +795,10 @@ async function copySnippet(kind: keyof ReturnType<typeof buildEmbedSnippets>): P
 
 function applyBuiltInPreset(presetId: PresetId): void {
   const preset = PRESETS[presetId];
-  state.presetId = presetId;
-  state.colors = normalizePalette(preset.colors);
-  state.background = normalizeHexColor(preset.background, state.background);
-  state.blendMode = preset.defaultBlendMode;
-  state.grainOpacity = preset.defaultGrainOpacity;
+  applySnapshot({
+    presetId,
+    ...preset.defaults,
+  });
 }
 
 function resetCurrentStyle(): void {
@@ -822,29 +867,10 @@ function snapshotFromState(input: AppState): PresetSnapshot {
 }
 
 function defaultSnapshot(): PresetSnapshot {
-  const preset = PRESETS.neon;
+  const preset = PRESETS['itonics-neutral'];
   return {
     presetId: preset.id,
-    colors: normalizePalette(preset.colors),
-    background: normalizeHexColor(preset.background, '#08111f'),
-    sectionHeightVh: 58,
-    shapeStyle: 'mesh',
-    maxDpr: 2,
-    paused: false,
-    speed: 1,
-    motionIntensity: 1.7,
-    grainOpacity: preset.defaultGrainOpacity,
-    centerBlobScale: 1,
-    centerOffsetX: 0,
-    centerOffsetY: 0,
-    blendMode: preset.defaultBlendMode,
-    fullCanvasGradient: false,
-    mouseInteraction: true,
-    mouseMode: 'repel',
-    mouseStrength: 1,
-    mouseRadius: 240,
-    blobCount: 5,
-    blurPx: 110,
+    ...preset.defaults,
   };
 }
 
@@ -924,7 +950,7 @@ function bindHexColorInput(
 }
 
 function normalizePalette(colors: string[]): string[] {
-  const fallback = PRESETS.neon.colors;
+  const fallback = PRESETS['itonics-neutral'].colors;
   return Array.from({ length: PALETTE_SIZE }, (_, index) => {
     const raw = colors[index] ?? fallback[index % fallback.length] ?? '#3b82f6';
     return normalizeHexColor(raw, '#3b82f6');
@@ -1093,14 +1119,14 @@ function buildColorFieldsHtml(): string {
       label: 'Background',
       colorId: 'backgroundColorInput',
       hexId: 'backgroundHexInput',
-      defaultValue: PRESETS.neon.background,
+      defaultValue: PRESETS['itonics-neutral'].background,
       full: true,
     },
     ...Array.from({ length: PALETTE_SIZE }, (_, index) => ({
       label: `Color ${index + 1}`,
       colorId: `colorInput${index}`,
       hexId: `colorHexInput${index}`,
-      defaultValue: PRESETS.neon.colors[index % PRESETS.neon.colors.length] ?? '#3b82f6',
+      defaultValue: PRESETS['itonics-neutral'].colors[index % PRESETS['itonics-neutral'].colors.length] ?? '#3b82f6',
       full: false,
     })),
   ];
@@ -1280,9 +1306,19 @@ function buildAppShellHtml(): string {
           <button id="copyJsBtn" type="button">Copy JS</button>
         </div>
 
+        <label>
+          <span>Video resolution</span>
+          <select id="videoResolutionSelect"></select>
+        </label>
+
+        <label>
+          <span>Video duration</span>
+          <select id="videoDurationSelect"></select>
+        </label>
+
         <div class="gb-actions gb-export-mode">
           <button id="downloadPngBtn" type="button">Download PNG @2x</button>
-          <button id="downloadVideoBtn" type="button">Download 10s MP4</button>
+          <button id="downloadVideoBtn" type="button">Download 10s 1080P Video</button>
         </div>
 
         <p id="statusLine" class="gb-status" role="status" aria-live="polite">Ready.</p>
